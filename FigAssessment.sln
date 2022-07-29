@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.2.32630.192
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{A998F7CF-117F-4097-ABCB-14E7CBC92E4B}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{0B39FF8B-F974-4C7A-95DF-205285596D5C}"
+	ProjectSection(SolutionItems) = preProject
+		.gitignore = .gitignore
+		README.md = README.md
+	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FIG.Assessment", "src\FIG.Assessment\FIG.Assessment.csproj", "{FF257B03-25FF-4097-B974-147BB6F3E0C0}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{FF257B03-25FF-4097-B974-147BB6F3E0C0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FF257B03-25FF-4097-B974-147BB6F3E0C0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FF257B03-25FF-4097-B974-147BB6F3E0C0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FF257B03-25FF-4097-B974-147BB6F3E0C0}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{FF257B03-25FF-4097-B974-147BB6F3E0C0} = {A998F7CF-117F-4097-ABCB-14E7CBC92E4B}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {6D5E7FB9-3411-4A84-9FF3-242B793CBDEB}
+	EndGlobalSection
+EndGlobal
