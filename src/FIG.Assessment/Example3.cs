@@ -1,25 +1,24 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using System.ComponentModel.DataAnnotations;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace FIG.Assessment;
 
 /// <summary>
-/// In this example, we are writing a service that will run (potentially as a windows service or elsewhere) and once a day will run a report on all new
-/// users who were created in our system within the last 24 hours, as well as all users who deactivated their account in the last 24 hours. We will then
-/// email this report to the executives so they can monitor how our user base is growing.
+///     Entry point for the daily report service.
+///     Uses dependency injection and a background worker.
 /// </summary>
 public class Example3
 {
     public static void Main(string[] args)
     {
         Host.CreateDefaultBuilder(args)
-            .ConfigureServices(services =>
+            .ConfigureServices((hostContext, services) =>
             {
-                services.AddDbContext<MyContext>(options =>
-                {
-                    options.UseSqlServer("dummy-connection-string");
-                });
+                services.AddDbContext<UserDbContextE3>(options => 
+                    options.UseSqlServer("dummy-connection-string"));
                 services.AddSingleton<ReportEngine>();
                 services.AddHostedService<DailyReportService>();
             })
@@ -28,79 +27,110 @@ public class Example3
     }
 }
 
-public class DailyReportService : BackgroundService
+/// <summary>
+///     Background service that generates and sends daily user reports.
+///     Uses a scheduled execution strategy.
+/// </summary>
+public class DailyReportService(ReportEngine reportEngine, ILogger<DailyReportService> logger)
+    : BackgroundService
 {
-    private readonly ReportEngine _reportEngine;
-
-    public DailyReportService(ReportEngine reportEngine) => _reportEngine = reportEngine;
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // when the service starts up, start by looking back at the last 24 hours
-        var startingFrom = DateTime.Now.AddDays(-1);
+        logger.LogInformation("DailyReportService started.");
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            var newUsersTask = this._reportEngine.GetNewUsersAsync(startingFrom);
-            var deactivatedUsersTask = this._reportEngine.GetDeactivatedUsersAsync(startingFrom);
-            await Task.WhenAll(newUsersTask, deactivatedUsersTask); // run both queries in parallel to save time
+            var now = DateTime.UtcNow;
+            var scheduledTime = now.Date.AddHours(3);
 
-            // send report to execs
-            await this.SendUserReportAsync(newUsersTask.Result, deactivatedUsersTask.Result);
+            if (now > scheduledTime) 
+                scheduledTime = scheduledTime.AddDays(1);
 
-            // save the current time, wait 24hr, and run the report again - using the new cutoff date
-            startingFrom = DateTime.Now;
-            await Task.Delay(TimeSpan.FromHours(24));
+            logger.LogInformation("Next report scheduled for {ScheduledTime} UTC", scheduledTime);
+            
+            var timeRemaining = scheduledTime - DateTime.UtcNow;
+            if (timeRemaining > TimeSpan.Zero)
+            {
+                try
+                {
+                    await Task.Delay(timeRemaining, stoppingToken);
+                }
+                catch (TaskCanceledException)
+                {
+                    logger.LogInformation("DailyReportService is shutting down.");
+                    return;
+                }
+            }
+
+
+            var startingFrom = DateTime.UtcNow.AddDays(-1);
+            logger.LogInformation("Generating user report for users created/deactivated since {StartTime} UTC", startingFrom);
+            
+            var results = await Task.WhenAll(
+                reportEngine.GetNewUsersAsync(startingFrom),
+                reportEngine.GetDeactivatedUsersAsync(startingFrom));
+
+            var newUsers = results[0];
+            var deactivatedUsers = results[1];
+
+            logger.LogInformation("Report generated. New users: {NewUserCount}, Deactivated users: {DeactivatedUserCount}",
+                newUsers.Count(), deactivatedUsers.Count());
+
+            await SendUserReportAsync(newUsers, deactivatedUsers);
         }
     }
 
-    private Task SendUserReportAsync(IEnumerable<User> newUsers, IEnumerable<User> deactivatedUsers)
+    private Task SendUserReportAsync(IEnumerable<UserE3> newUsers, IEnumerable<UserE3> deactivatedUsers)
     {
-        // not part of this example
+        logger.LogInformation("Sending user report: {NewUserCount} new users, {DeactivatedUserCount} deactivated users.",
+            newUsers.Count(), deactivatedUsers.Count());
+
         return Task.CompletedTask;
     }
 }
 
 /// <summary>
-/// A dummy report engine that runs queries and returns results.
-/// The queries here a simple but imagine they might be complex SQL queries that could take a long time to complete.
+///     Report engine responsible for fetching user data from the database.
+///     Optimized to avoid loading unnecessary records into memory.
 /// </summary>
-public class ReportEngine
+public class ReportEngine(UserDbContextE3 db, ILogger<ReportEngine> logger)
 {
-    private readonly MyContext _db;
-
-    public ReportEngine(MyContext db) => _db = db;
-
-    public async Task<IEnumerable<User>> GetNewUsersAsync(DateTime startingFrom)
+    public async Task<List<UserE3>> GetNewUsersAsync(DateTime startingFrom)
     {
-        var newUsers = (await this._db.Users.ToListAsync())
-            .Where(u => u.CreatedAt > startingFrom);
-        return newUsers;
+        logger.LogInformation("Fetching new users created since {StartTime} UTC", startingFrom);
+        return await db.Users
+            .Where(u => u.CreatedAt > startingFrom)
+            .ToListAsync();
     }
 
-    public async Task<IEnumerable<User>> GetDeactivatedUsersAsync(DateTime startingFrom)
+    public async Task<List<UserE3>> GetDeactivatedUsersAsync(DateTime startingFrom)
     {
-        var deactivatedUsers = (await this._db.Users.ToListAsync())
-            .Where(u => u.DeactivatedAt > startingFrom);
-        return deactivatedUsers;
+        logger.LogInformation("Fetching deactivated users since {StartTime} UTC", startingFrom);
+        return await db.Users
+            .Where(u => u.DeactivatedAt > startingFrom)
+            .ToListAsync();
     }
 }
 
 #region Database Entities
-// a dummy EFCore dbcontext - not concerned with actually setting up connection strings or configuring the context in this example
-public class MyContext : DbContext
-{
-    public DbSet<User> Users { get; set; }
-}
 
-public class User
-{
-    public int UserId { get; set; }
+// Ignored per instructions. Simply renamed to prevent conflicts with other examples.
 
-    public string UserName { get; set; }
+public class UserE3
+{
+    [Key] public required int UserId { get; set; }
+    
+    [MaxLength(50)]
+    public string UserName { get; set; } = string.Empty;
 
     public DateTime CreatedAt { get; set; }
 
     public DateTime? DeactivatedAt { get; set; }
 }
+
+public class UserDbContextE3(DbContextOptions<UserDbContextE3> options) : DbContext(options)
+{
+    public DbSet<UserE3> Users { get; set; }
+}
+
 #endregion

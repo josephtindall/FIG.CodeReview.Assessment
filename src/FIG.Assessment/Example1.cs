@@ -1,62 +1,90 @@
-﻿namespace FIG.Assessment;
+﻿using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 
-/// <summary>
-/// In this example, the goal of this GetPeopleInfo method is to fetch a list of Person IDs from our database (not implemented / not part of this example),
-/// and for each Person ID we need to hit some external API for information about the person. Then we would like to return a dictionary of the results to the caller.
-/// We want to perform this work in parallel to speed it up, but we don't want to hit the API too frequently, so we are trying to limit to 5 requests at a time at most
-/// by using 5 background worker threads.
-/// Feel free to suggest changes to any part of this example.
-/// In addition to finding issues and/or ways of improving this method, what is a name for this sort of queueing pattern?
-/// </summary>
-public class Example1
+namespace FIG.Assessment;
+
+public class Example1(ILogger logger)
 {
-    public Dictionary<int, int> GetPeopleInfo()
+    private static readonly HttpClient HttpClient = new();
+
+    /// <summary>
+    ///     Fetches a list of Person IDs and retrieves their age information via an external API.
+    /// </summary>
+    /// <param name="cancellationToken">Token for canceling the operation.</param>
+    /// <returns>A dictionary mapping Person IDs to their ages.</returns>
+    public async Task<Dictionary<int, int>> GetPeopleInfoAsync(CancellationToken cancellationToken = default)
     {
-        // initialize empty queue, and empty result set
-        var personIdQueue = new Queue<int>();
-        var results = new Dictionary<int, int>();
+        var personIdQueue = new ConcurrentQueue<int>();
+        var results = new ConcurrentDictionary<int, int>();
 
-        // start thread which will populate the queue
-        var collectThread = new Thread(() => CollectPersonIds(personIdQueue));
-        collectThread.Start();
+        await CollectPersonIdsAsync(personIdQueue);
 
-        // start 5 worker threads to read through the queue and fetch info on each item, adding to the result set
-        var gatherThreads = new List<Thread>();
-        for (var i = 0; i < 5; i++)
-        {
-            var gatherThread = new Thread(() => GatherInfo(personIdQueue, results));
-            gatherThread.Start();
-            gatherThreads.Add(gatherThread);
-        }
+        await Parallel.ForEachAsync(
+            personIdQueue,
+            new ParallelOptions { MaxDegreeOfParallelism = 5, CancellationToken = cancellationToken },
+            async (id, _) =>
+            {
+                try
+                {
+                    var age = await FetchPersonAgeAsync(id, cancellationToken);
+                    if (age != -1) results[id] = age;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError($"Error processing ID {id}: {ex.Message}");
+                }
+            });
 
-        // wait for all threads to finish
-        collectThread.Join();
-        foreach (var gatherThread in gatherThreads)
-            gatherThread.Join();
-
-        return results;
+        return new Dictionary<int, int>(results);
     }
 
-    private void CollectPersonIds(Queue<int> personIdQueue)
+
+    /// <summary>
+    ///     Collects Person IDs from a database and enqueues them for processing.
+    /// </summary>
+    /// <param name="personIdQueue">Queue to store Person IDs.</param>
+    private async Task CollectPersonIdsAsync(ConcurrentQueue<int> personIdQueue)
     {
-        // dummy implementation, would be pulling from a database
         for (var i = 1; i < 100; i++)
         {
-            if (i % 10 == 0) Thread.Sleep(TimeSpan.FromMilliseconds(50)); // artificial delay every now and then
+#if DEBUG
+            if (i % 10 == 0)
+            {
+                logger.LogDebug("Simulating database delay for ID {Id}", i);
+                await Task.Delay(50);
+            }
+#endif
             personIdQueue.Enqueue(i);
         }
     }
 
-    private void GatherInfo(Queue<int> personIdQueue, Dictionary<int, int> results)
+    /// <summary>
+    ///     Calls the external API to fetch a person's age.
+    /// </summary>
+    /// <param name="id">Person ID.</param>
+    /// <param name="cancellationToken">Token for canceling the operation.</param>
+    /// <returns>Age of the person.</returns>
+    private async Task<int> FetchPersonAgeAsync(int id, CancellationToken cancellationToken)
     {
-        // pull IDs off the queue until it is empty
-        while (personIdQueue.TryDequeue(out var id))
+        try
         {
-            var client = new HttpClient();
-            var request = new HttpRequestMessage(HttpMethod.Get, $"https://some.example.api/people/{id}/age");
-            var response = client.SendAsync(request).Result;
-            var age = int.Parse(response.Content.ReadAsStringAsync().Result);
-            results[id] = age;
+            await using var stream = await HttpClient.GetStreamAsync(
+                $"https://some.example.api/people/{id}/age",
+                cancellationToken);
+
+            using var reader = new StreamReader(stream);
+            var content = await reader.ReadToEndAsync(cancellationToken);
+
+            if (int.TryParse(content, out var age))
+                return age;
+
+            logger.LogWarning("Invalid age format received for ID {Id}: {Content}", id, content);
+            return -1;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error fetching age for ID {Id}", id);
+            return -1;
         }
     }
 }
